@@ -1,13 +1,25 @@
 import os
 import datetime
+import pytz
 from google.cloud import firestore
 import requests
+from influxdb_client import InfluxDBClient, Point, WriteOptions
+from influxdb_client.client.write_api import SYNCHRONOUS
 #import smtplib
 #from email.mime.multipart import MIMEMultipart
 #from email.mime.text import MIMEText
 
 # Initialize Firestore Client
 db = firestore.Client()
+
+# Initialize InfluxDB Client
+influxdb_url = os.environ.get("INFLUXDB_URL")
+influxdb_token = os.environ.get("INFLUXDB_TOKEN")
+influxdb_org = os.environ.get("INFLUXDB_ORG")
+influxdb_bucket = os.environ.get("INFLUXDB_BUCKET")
+
+influxdb_client = InfluxDBClient(url=influxdb_url, token=influxdb_token, org=influxdb_org)
+write_api = influxdb_client.write_api(write_options=SYNCHRONOUS)
 
 # Define your Firestore collection reference for sensor status
 status_collection = db.collection("sensors_grouped")
@@ -77,6 +89,12 @@ def is_sensor_online(eui, structure_id):
 
     except requests.RequestException as e:
         return False, None
+
+def write_to_influxdb(eui, is_online, sensor_name, structure_name, structure_id):
+    helsinki_timezone = pytz.timezone("Europe/Helsinki")
+    helsinki_time = datetime.datetime.now(helsinki_timezone)
+    point = Point("sensor_status").tag("eui", eui).tag("structure_id", structure_id).tag("structure_name", structure_name).field("is_online", is_online).time(helsinki_time)
+    write_api.write(bucket=influxdb_bucket, record=point)
 
 def update_sensor_status_in_firestore(eui, is_online, sensor_name, structure_name):
     sensor_doc = status_collection.document(eui)
@@ -176,6 +194,9 @@ def check_sensor_status(request):
 
                 # Update sensor status based on the current status
                 update_sensor_status_in_firestore(eui, online_status, sensor_name, structure_name)  # Corrected function call
+
+                # Write to InfluxDB
+                write_to_influxdb(eui, online_status, sensor_name, structure_name, structure_id)
 
     print("Sensor status checks completed.")
 
