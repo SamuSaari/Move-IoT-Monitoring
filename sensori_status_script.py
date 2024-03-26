@@ -39,13 +39,41 @@ RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL")
 
 def fetch_structures():
     headers = {'Authorization': f'Bearer {API_KEY}'}
-    url = f'{BASE_URL}/api/v3/structures?page=0'
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        return response.json()["values"]  # Return a list of structures
-    else:
-        # Handle errors (log them or throw an exception)
+    url = f'{BASE_URL}/api/v3/structures'
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            return data["values"]  # Return all structures
+        else:
+            print("Failed to fetch structures")
+            return []
+    except requests.RequestException as e:
+        print(f"Error while fetching structures: {e}")
         return []
+
+def fetch_all_structure_ids():
+    headers = {'Authorization': f'Bearer {API_KEY}'}
+    url = f'{BASE_URL}/api/v3/structures'
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            return [structure['id'] for structure in data]
+        else:
+            print("Failed to fetch structure IDs")
+            return []
+    except requests.RequestException as e:
+        print(f"Error while fetching structure IDs: {e}")
+        return []
+
+def fetch_sensors_for_all_structures():
+    structure_ids = fetch_all_structure_ids()
+    all_sensors = []
+    for structure_id in structure_ids:
+        sensors = fetch_sensors_for_structure(structure_id)
+        all_sensors.extend(sensors)
+    return all_sensors
 
 def fetch_sensors_for_structure(structure_id):
     headers = {
