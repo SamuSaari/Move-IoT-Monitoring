@@ -5,6 +5,7 @@ from google.cloud import firestore
 import requests
 from influxdb_client import InfluxDBClient, Point, WriteOptions
 from influxdb_client.client.write_api import SYNCHRONOUS
+# Uncomment if email notification is needed
 #import smtplib
 #from email.mime.multipart import MIMEMultipart
 #from email.mime.text import MIMEText
@@ -28,20 +29,25 @@ status_collection = db.collection("sensors_grouped")
 PUSHOVER_API_TOKEN = os.environ.get("PUSHOVER_API_TOKEN")
 PUSHOVER_USER_KEY = os.environ.get("PUSHOVER_USER_KEY")
 
-# Move Solutions API and define sensors to monitor
+# Move Solutions API credentials (retrieved from environment variables)
 API_KEY = os.environ.get("API_KEY")
 BASE_URL = os.environ.get("BASE_URL")
-STRUCTURE_ID = os.environ.get("STRUCTURE_ID")
 
+# email notification credentials (commented out for future use)
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 SENDER_APP_PASSWORD = os.environ.get("SENDER_APP_PASSWORD")
 RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL")
 
+# Function to fetch structures from the Move Solutions API
 def fetch_structures():
+    # Define headers for the API request
     headers = {'Authorization': f'Bearer {API_KEY}'}
+    # Define the URL for the API request
     url = f'{BASE_URL}/api/v3/structures'
     try:
+        # Send a GET request to the API
         response = requests.get(url, headers=headers)
+        # If the response status code is 200, return the structures
         if response.status_code == 200:
             data = response.json()
             return data["values"]  # Return all structures
@@ -52,18 +58,25 @@ def fetch_structures():
         print(f"Error while fetching structures: {e}")
         return []
 
+# Function to fetch all structure IDs from the Move Solutions API
 def fetch_all_structure_ids():
+    # Define headers for the API request
     headers = {'Authorization': f'Bearer {API_KEY}'}
+    # Define the URL for the API request
     url = f'{BASE_URL}/api/v3/structures'
     try:
+        # Send a GET request to the API
         response = requests.get(url, headers=headers)
+        # If the response status code is 200, return the structure IDs
         if response.status_code == 200:
             data = response.json()
             return [structure['id'] for structure in data]
         else:
+            # If the response status code is not 200, print an error message
             print("Failed to fetch structure IDs")
             return []
     except requests.RequestException as e:
+        # If there is an exception while sending the request, print an error message
         print(f"Error while fetching structure IDs: {e}")
         return []
 
@@ -75,6 +88,7 @@ def fetch_sensors_for_all_structures():
         all_sensors.extend(sensors)
     return all_sensors
 
+# Function to fetch sensors for a specific structure
 def fetch_sensors_for_structure(structure_id):
     headers = {
         'Authorization': f'Bearer {API_KEY}'
@@ -93,7 +107,7 @@ def fetch_sensors_for_structure(structure_id):
         print(f"Error while fetching sensors for structure {structure_id}: {e}")
         return []
 
-# Yhdistetään APIin ja pyritään saamaan response code 200, joka tarkoittaa, että sensori vastaa eli on verkossa
+# Connect to the API and try to get a response code of 200, which means the sensor is online
 def is_sensor_online(eui, structure_id):
     headers = {
         'Authorization': f'Bearer {API_KEY}'
@@ -118,16 +132,19 @@ def is_sensor_online(eui, structure_id):
     except requests.RequestException as e:
         return False, None
 
+# Function to write sensor status to InfluxDB for visualization
 def write_to_influxdb(eui, is_online, sensor_name, structure_name, structure_id):
     helsinki_timezone = pytz.timezone("Europe/Helsinki")
     helsinki_time = datetime.datetime.now(helsinki_timezone)
     point = Point("sensor_status").tag("eui", eui).tag("structure_id", structure_id).tag("structure_name", structure_name).field("is_online", is_online).time(helsinki_time)
     write_api.write(bucket=influxdb_bucket, record=point)
 
+#  function to update sensor status in Firestore
 def update_sensor_status_in_firestore(eui, is_online, sensor_name, structure_name):
     sensor_doc = status_collection.document(eui)
     doc_snapshot = sensor_doc.get()
 
+    # Check if the document exists in Firestore
     if doc_snapshot.exists:
         data = doc_snapshot.to_dict()
         previous_status = data.get("is_online", None)
@@ -154,6 +171,7 @@ def update_sensor_status_in_firestore(eui, is_online, sensor_name, structure_nam
             "last_updated": firestore.SERVER_TIMESTAMP
         })
 
+# Function to send push notifications
 def send_push_notification(sensor_eui, new_status, structure_name, sensor_name):
     message = f"Sensor '{sensor_name}' ({sensor_eui}) in '{structure_name}' is now {'online' if new_status else 'offline'}."
 
@@ -192,39 +210,54 @@ def send_push_notification(sensor_eui, new_status, structure_name, sensor_name):
 #     except Exception as e:
 #         print(f"Error while sending email notification: {e}")
 
+# Main function to check sensor status (Used for Google cloud function)
 def check_sensor_status(request):
     structures = fetch_structures()
 
     for structure in structures:
-        structure_id = structure["_id"]
-        structure_name = structure["name"]
-        sensors = fetch_sensors_for_structure(structure_id)
+        if "_id" in structure:
+            structure_id = structure["_id"]
+            structure_name = structure["name"]
+            sensors = fetch_sensors_for_structure(structure_id)
 
-        for sensor in sensors:
-            eui = sensor["eui"]
-            sensor_name = sensor["userConfig"]["name"]  # Extract sensor name
-            online_status = sensor["online"]
+            for sensor in sensors:
+                eui = sensor["eui"]
+                sensor_name = sensor["userConfig"]["name"]  # Extract sensor name
+                online_status = sensor["online"]
 
-            # Retrieve the last known status from Firestore
-            sensor_doc = status_collection.document(eui)
-            doc_snapshot = sensor_doc.get()
+                # Retrieve the last known status from Firestore
+                sensor_doc = status_collection.document(eui)
+                doc_snapshot = sensor_doc.get()
 
-            if doc_snapshot.exists:
-                data = doc_snapshot.to_dict()
-                previous_status = data.get("is_online", None)
+                if doc_snapshot.exists:
+                    data = doc_snapshot.to_dict()
+                    previous_status = data.get("is_online", None)
 
-                if previous_status is not None and online_status != previous_status:
-                    send_push_notification(eui, online_status, structure_name, sensor_name)
-                
-                # email_subject = "Sensor Status Update"
-                # email_message = "Your email message here..."
-                # send_email_notification(email_subject, email_message)
+                    if previous_status is not None and online_status != previous_status:
+                        send_push_notification(eui, online_status, structure_name, sensor_name)
+                    
+                    # email_subject = "Sensor Status Update"
+                    # email_message = "Your email message here..."
+                    # send_email_notification(email_subject, email_message)
+
+                else:
+                    # If sensor is not found in Firestore, add it
+                    sensor_doc.set({
+                        "eui": eui,
+                        "is_online": online_status,
+                        "sensor_name": sensor_name,
+                        "structure_name": structure_name,
+                        "structure_id": structure_id
+                    })
 
                 # Update sensor status based on the current status
                 update_sensor_status_in_firestore(eui, online_status, sensor_name, structure_name)  # Corrected function call
 
                 # Write to InfluxDB
                 write_to_influxdb(eui, online_status, sensor_name, structure_name, structure_id)
+
+        else:
+            print(f"Structure does not contain '_id': {structure}")
 
     print("Sensor status checks completed.")
 

@@ -3,6 +3,7 @@ import datetime
 from datetime import datetime
 from google.cloud import firestore
 import requests
+# uncomment if email notification is needed
 # from email.mime.multipart import MIMEMultipart
 # from email.mime.text import MIMEText
 
